@@ -1,0 +1,18 @@
+# Logs
+logs/
+*.log
+
+# Cache
+__pycache__/
+*.pyc
+
+# Local Config and Data
+config.json
+prompts.json
+
+# Mac OS
+.DS_Store
+
+# Virtual Environment
+venv/
+env/

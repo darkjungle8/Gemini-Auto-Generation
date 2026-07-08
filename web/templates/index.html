@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>Gemini 多账号自动生图</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.6.1/socket.io.js"></script>
+</head>
+<body>
+    <div class="app-container">
+        <header>
+            <h1>🤖 Gemini 多账号自动生图</h1>
+            <div class="status-indicator" id="statusIndicator">就绪</div>
+        </header>
+
+        <!-- ========== STEP-BY-STEP WORKFLOW ========== -->
+        <div class="workflow-bar">
+            <div class="step active" id="stepIndicator1"><span class="step-num">1</span> 配置并开始</div>
+            <div class="step-arrow">→</div>
+            <div class="step" id="stepIndicator2"><span class="step-num">2</span> 浏览器内手动登录</div>
+            <div class="step-arrow">→</div>
+            <div class="step" id="stepIndicator3"><span class="step-num">3</span> 自动跑图</div>
+        </div>
+
+        <main>
+            <!-- ========== PANEL 1: SETTINGS & RUN ========== -->
+            <div class="panel settings-panel">
+                <h2>⚙️ 配置任务</h2>
+                <p class="hint">所有路径请填写绝对路径，配置只需设置一次，程序会自动保存。</p>
+
+                <div class="input-group">
+                    <label>📁 Chrome 账号目录</label>
+                    <input type="text" id="profileDir" placeholder="/Users/xxx/ChromeProfiles">
+                    <small>程序会自动在此目录下创建每个账号的隔离文件夹</small>
+                </div>
+                <div class="input-group">
+                    <label>💾 图片输出目录</label>
+                    <input type="text" id="outputDir" placeholder="/Users/xxx/Downloads/GeminiImages">
+                </div>
+                <div class="input-group">
+                    <label>⏱️ 生成间隔冷却 (秒)</label>
+                    <input type="number" id="cooldownTime" value="15" min="1" max="300">
+                    <small>每个窗口内，同一提示词每次出图后的等待时间</small>
+                </div>
+                <div class="row">
+                    <div class="input-group">
+                        <label>🏷️ 图片命名前缀</label>
+                        <input type="text" id="imgPrefix" value="gemini_img">
+                    </div>
+                    <div class="input-group">
+                        <label>🖥️ 并行窗口数 (1~10)</label>
+                        <input type="number" id="parallelWindows" value="1" min="1" max="10">
+                    </div>
+                    <div class="input-group">
+                        <label>👥 单窗口账号轮换数</label>
+                        <input type="number" id="accountsPerWindow" value="10" min="1" max="100">
+                    </div>
+                </div>
+                
+                <div class="run-controls" style="margin-top: 1.5rem; border-top: 1px solid var(--glass-border); padding-top: 1.5rem;">
+                    <button id="startBtn" class="btn login-btn">1️⃣ 打开窗口准备登录 (保存配置)</button>
+                    <button id="confirmBtn" class="btn success" disabled>2️⃣ 登录完成，开始跑图</button>
+                    <button id="stopBtn" class="btn danger" disabled>⏹ 停止</button>
+                    <span id="saveStatus" class="save-status"></span>
+                </div>
+                
+                <div class="info-box" style="margin-top: 1rem;">
+                    <strong>ℹ️ 工作流程说明：</strong><br>
+                    点击开始后，脚本会弹出 Chrome 窗口。请直接在窗口中手动登录 Google。<br>
+                    登录完成后（进入了包含输入框的 Gemini 界面），点击“登录完成，开始跑图”按钮。<br>
+                    所有窗口将自动从右侧的“提示词任务队列”中抢单执行！
+                </div>
+            </div>
+            
+            <!-- ========== PANEL: TASKS ========== -->
+            <div class="panel tasks-panel">
+                <h2>📝 提示词任务队列</h2>
+                <p class="hint">所有并发窗口会共享此队列，自动认领并执行任务。</p>
+                
+                <div class="row" style="margin-bottom: 1rem; align-items: flex-end;">
+                    <div class="input-group" style="flex: 3; margin-bottom: 0;">
+                        <label>提示词 (Prompt)</label>
+                        <input type="text" id="newTaskPrompt" placeholder="例如: 帮我生成一只可爱的猫咪...">
+                    </div>
+                    <div class="input-group" style="flex: 1; margin-bottom: 0;">
+                        <label>目标张数</label>
+                        <input type="number" id="newTaskCount" value="4" min="1">
+                    </div>
+                    <button id="addTaskBtn" class="btn primary" style="margin-bottom: 0;">➕ 添加</button>
+                </div>
+
+                <ul class="tasks-list" id="tasksList">
+                    <li class="empty-hint">加载中...</li>
+                </ul>
+            </div>
+            
+            <!-- ========== PANEL 2: LOGS ========== -->
+            <div class="panel run-panel">
+                <h3 class="log-title">📋 实时日志</h3>
+                <div class="log-container" id="logContainer"></div>
+            </div>
+        </main>
+    </div>
+    <script src="/static/script.js"></script>
+</body>
+</html>
