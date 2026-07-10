@@ -18,7 +18,7 @@
 ### 方式二：终端命令行启动
 打开终端 (Terminal 或 cmd)，输入以下命令：
 ```cmd
-cd D:\5EDemocache\gemini-auto-gen
+cd 保存路径\gemini-auto-gen
 python main.py
 ```
 
