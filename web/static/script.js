@@ -4,7 +4,6 @@ const els = {
     // Inputs
     profileDir: document.getElementById('profileDir'),
     outputDir: document.getElementById('outputDir'),
-    excelFile: document.getElementById('excelFile'),
     imgPrefix: document.getElementById('imgPrefix'),
     parallelWindows: document.getElementById('parallelWindows'),
     accountsPerWindow: document.getElementById('accountsPerWindow'),
@@ -26,8 +25,16 @@ const els = {
     newTaskPrompt: document.getElementById('newTaskPrompt'),
     newTaskCount: document.getElementById('newTaskCount'),
     addTaskBtn: document.getElementById('addTaskBtn'),
+    clearTasksBtn: document.getElementById('clearTasksBtn'),
     tasksList: document.getElementById('tasksList'),
-    cooldownTime: document.getElementById('cooldownTime')
+    taskBadge: document.getElementById('taskBadge'),
+    cooldownTime: document.getElementById('cooldownTime'),
+
+    // Miner UI
+    minerKeyword: document.getElementById('minerKeyword'),
+    minerLimit: document.getElementById('minerLimit'),
+    minerTargetCount: document.getElementById('minerTargetCount'),
+    mineBtn: document.getElementById('mineBtn')
 };
 
 // --- Config Management ---
@@ -59,7 +66,7 @@ async function saveConfig() {
     };
     
     if (!data.chrome_profile_base_dir || !data.output_dir) {
-        alert("请完整填写账号目录和输出目录！");
+        alert("请完整填写 Chrome 账号目录和图片输出目录！");
         return false;
     }
 
@@ -70,8 +77,7 @@ async function saveConfig() {
             body: JSON.stringify(data)
         });
         
-        // Show success status briefly
-        els.saveStatus.textContent = "配置已保存";
+        els.saveStatus.textContent = "✓ 已保存";
         els.saveStatus.classList.add('show');
         setTimeout(() => els.saveStatus.classList.remove('show'), 2000);
         return true;
@@ -87,7 +93,7 @@ async function startRun() {
     if (!saved) return;
     
     els.logContainer.innerHTML = '';
-    appendLog("[前台] 发送启动请求 (打开窗口准备登录)...", "info");
+    appendLog("[系统] 正在打开 Gemini 浏览器窗口，请在弹出的窗口中手动登录 Google...", "info");
     
     try {
         const res = await fetch('/api/start', {
@@ -106,7 +112,8 @@ async function startRun() {
 }
 
 async function confirmRun() {
-    appendLog("[前台] 发送确认跑图指令...", "info");
+    appendLog("[系统] ✅ 登录确认！Gemini 跑图机器人已就位，等待任务...", "success");
+    appendLog("[系统] 现在请去下方「亚马逊爆款挖掘」区域点击挖掘，或手动添加任务。", "info");
     try {
         await fetch('/api/confirm', {method: 'POST'});
     } catch (e) {
@@ -173,7 +180,7 @@ async function addTask() {
 }
 
 async function deleteTask(taskId) {
-    if (!confirm("确定要删除这个任务吗？")) return;
+    if (!confirm("确定删除？")) return;
     try {
         await fetch(`/api/tasks/${taskId}`, { method: 'DELETE' });
     } catch (e) {
@@ -184,9 +191,13 @@ async function deleteTask(taskId) {
 function renderTasks(tasks) {
     els.tasksList.innerHTML = '';
     if (!tasks || tasks.length === 0) {
-        els.tasksList.innerHTML = '<li class="empty-hint">暂无提示词任务，请在上方添加</li>';
+        els.tasksList.innerHTML = '<li class="empty-hint">暂无任务 — 请先挖掘亚马逊或手动添加</li>';
+        els.taskBadge.textContent = '';
         return;
     }
+    
+    const pending = tasks.filter(t => t.status === 'pending' || t.status === 'running').length;
+    els.taskBadge.textContent = pending > 0 ? `(${pending} 个待执行)` : `(${tasks.length} 个)`;
     
     tasks.forEach(task => {
         const li = document.createElement('li');
@@ -197,16 +208,21 @@ function renderTasks(tasks) {
         promptDiv.title = task.prompt;
         
         let statusClass = '';
-        let statusText = `${task.current_count}/${task.target_count} 张`;
+        let statusText = `${task.current_count}/${task.target_count}`;
         
         if (task.status === 'completed') {
             statusClass = 'completed';
-            statusText = '✅ 已完成';
+            statusText = '✅';
         } else if (task.status === 'failed') {
             statusClass = 'failed';
-            statusText = '❌ 失败';
+            statusText = '❌';
         } else if (task.status === 'running') {
-            statusText = `🚀 跑图中 (${task.current_count}/${task.target_count})`;
+            statusText = `🚀 ${task.current_count}/${task.target_count}`;
+        }
+        
+        // Show reference image indicator
+        if (task.reference_image_path) {
+            statusText = '📷' + statusText;
         }
         
         const statusDiv = document.createElement('div');
@@ -227,19 +243,30 @@ function renderTasks(tasks) {
 }
 
 // --- Event Listeners ---
+async function clearTasks() {
+    if (!confirm("确定清空所有排队任务吗？")) return;
+    try {
+        await fetch('/api/tasks/clear', { method: 'POST' });
+    } catch (e) {
+        console.error("Failed to clear tasks", e);
+    }
+}
+
 els.startBtn.onclick = startRun;
 els.confirmBtn.onclick = confirmRun;
 els.stopBtn.onclick = stopRun;
 els.addTaskBtn.onclick = addTask;
+els.clearTasksBtn.onclick = clearTasks;
 
 // --- Socket IO ---
 socket.on('log_event', (data) => {
     appendLog(data.message, data.level);
     
-    // Auto-update workflow based on log messages
     if (data.message.includes("等待手动确认")) {
         updateWorkflow(2);
-    } else if (data.message.includes("收到确认信号")) {
+    } else if (data.message.includes("收到确认信号") || data.message.includes("登录确认")) {
+        updateWorkflow(2);
+    } else if (data.message.includes("执行生成") || data.message.includes("开始处理任务")) {
         updateWorkflow(3);
     }
 });
@@ -253,13 +280,13 @@ socket.on('status_update', (data) => {
         els.startBtn.disabled = true;
         els.confirmBtn.disabled = true;
         els.stopBtn.disabled = false;
-        els.statusIndicator.textContent = '运行中 🚀';
+        els.statusIndicator.textContent = '跑图中 🚀';
         els.statusIndicator.style.color = 'var(--warning)';
     } else if (data.status === 'waiting') {
         els.startBtn.disabled = true;
         els.confirmBtn.disabled = false;
         els.stopBtn.disabled = false;
-        els.statusIndicator.textContent = '等待确认 ⏳';
+        els.statusIndicator.textContent = '等待登录 ⏳';
         els.statusIndicator.style.color = 'var(--accent)';
     } else {
         els.startBtn.disabled = false;
@@ -274,3 +301,50 @@ socket.on('status_update', (data) => {
 // Init
 loadConfig();
 fetchTasks();
+
+// ==========================================
+// Miner Logic
+// ==========================================
+if(els.mineBtn) {
+    els.mineBtn.addEventListener('click', async () => {
+        const keyword = els.minerKeyword.value.trim();
+        const limit = parseInt(els.minerLimit.value);
+        const target_count = parseInt(els.minerTargetCount.value) || 4;
+
+        if (!keyword) {
+            alert("请输入关键词！");
+            return;
+        }
+
+        els.mineBtn.disabled = true;
+        els.mineBtn.textContent = "⛏️ 搜索亚马逊中...请勿关闭弹出的浏览器窗口";
+        appendLog(`[挖掘机] 开始搜索亚马逊: "${keyword}"，目标 ${limit} 个商品...`, "info");
+        appendLog(`[挖掘机] 会弹出一个 Chrome 窗口访问亚马逊，请不要手动关闭它！`, "warning");
+
+        try {
+            const response = await fetch('/api/mine_trends', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ keyword, limit, target_count })
+            });
+            
+            if (response.ok) {
+                appendLog(`[挖掘机] 挖掘任务已启动，正在后台进行：搜索 → 过滤 → 进入详情页 → 下载原图 → 生成提示词...`, "info");
+                // Reset button after a delay
+                setTimeout(() => {
+                    els.mineBtn.disabled = false;
+                    els.mineBtn.textContent = "⛏️ 一键挖掘 → 下载原图 → 生成提示词";
+                }, 60000); // 1 minute cooldown
+            } else {
+                alert('挖掘任务启动失败');
+                els.mineBtn.disabled = false;
+                els.mineBtn.textContent = "⛏️ 一键挖掘 → 下载原图 → 生成提示词";
+            }
+        } catch (error) {
+            console.error('Miner Error:', error);
+            alert('请求失败');
+            els.mineBtn.disabled = false;
+            els.mineBtn.textContent = "⛏️ 一键挖掘 → 下载原图 → 生成提示词";
+        }
+    });
+}

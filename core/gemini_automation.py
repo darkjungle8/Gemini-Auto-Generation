@@ -162,6 +162,74 @@ class GeminiAutomation:
         time.sleep(0.5)
         logger.debug(f"Typed prompt ({len(prompt_text)} chars)")
 
+    def upload_image(self, file_path: str):
+        """Upload a local image file to Gemini."""
+        import base64
+        try:
+            # First, try to find input[type='file'] piercing through shadow DOMs
+            js_find_input = """
+            function findFileInput(root) {
+                if (root.matches && root.matches("input[type='file']")) return root;
+                if (root.shadowRoot) {
+                    let res = findFileInput(root.shadowRoot);
+                    if (res) return res;
+                }
+                let children = root.children;
+                if (children) {
+                    for (let i = 0; i < children.length; i++) {
+                        let res = findFileInput(children[i]);
+                        if (res) return res;
+                    }
+                }
+                return null;
+            }
+            return findFileInput(document.body);
+            """
+            file_input = self.driver.execute_script(js_find_input)
+            
+            if file_input:
+                file_input.send_keys(file_path)
+                logger.info(f"Uploaded reference image via file input: {file_path}")
+                time.sleep(5)
+                return
+            else:
+                logger.warning("No file input found in Shadow DOM. Falling back to JS Paste.")
+                
+        except Exception as e:
+            logger.warning(f"File input strategy failed: {e}. Falling back to JS Paste.")
+            
+        # Fallback: dispatch a paste event with the image to the editor
+        try:
+            with open(file_path, "rb") as f:
+                b64_data = base64.b64encode(f.read()).decode("utf-8")
+                
+            js_paste = """
+            var b64Data = arguments[0];
+            var promptEl = document.querySelector("rich-textarea .ql-editor") || 
+                           document.querySelector("[contenteditable='true']") || 
+                           document.querySelector("textarea") || 
+                           document.activeElement;
+            
+            fetch("data:image/jpeg;base64," + b64Data)
+            .then(res => res.blob())
+            .then(blob => {
+                var file = new File([blob], "reference.jpg", {type: "image/jpeg"});
+                var dt = new DataTransfer();
+                dt.items.add(file);
+                var ev = new ClipboardEvent("paste", {
+                    clipboardData: dt,
+                    bubbles: true,
+                    cancelable: true
+                });
+                promptEl.dispatchEvent(ev);
+            });
+            """
+            self.driver.execute_script(js_paste, b64_data)
+            logger.info(f"Pasted reference image via JS: {file_path}")
+            time.sleep(5)
+        except Exception as e:
+            logger.error(f"Failed to upload reference image via paste: {e}")
+
     def submit_prompt(self):
         """Click the send button (or fall back to pressing Enter)."""
         try:
@@ -177,7 +245,7 @@ class GeminiAutomation:
     # Waiting for generation
     # ------------------------------------------------------------------
 
-    def wait_for_image_generation(self):
+    def wait_for_image_generation(self, existing_srcs=None):
         """Block until images appear, quota is exhausted, or we time out.
 
         Returns:
@@ -187,7 +255,7 @@ class GeminiAutomation:
         while time.time() - start < self.generation_timeout:
             if self._check_quota_exhausted():
                 return "quota_exhausted"
-            if self._find_generated_images():
+            if self._find_generated_images(existing_srcs=existing_srcs):
                 return "success"
             time.sleep(3)
         return "timeout"
@@ -196,9 +264,9 @@ class GeminiAutomation:
     # Image discovery & download
     # ------------------------------------------------------------------
 
-    def download_generated_images(self):
+    def download_generated_images(self, existing_srcs=None):
         """Return a list of image payloads (base64 data-URIs, URLs, or raw bytes)."""
-        images = self._find_generated_images()
+        images = self._find_generated_images(existing_srcs=existing_srcs)
         downloaded = []
 
         for idx, img_el in enumerate(images):
@@ -220,20 +288,89 @@ class GeminiAutomation:
     # High-level convenience
     # ------------------------------------------------------------------
 
-    def generate_and_download(self, prompt_text: str):
-        """Full flow: type prompt → submit → wait → download.
+    def _click_create_image_button(self):
+        """Click the '+' button and select 'Create image' / '制作图片' using pure Selenium native clicks."""
+        try:
+            # 1. Find the '+' button
+            plus_btn_xpath = "//button[contains(@aria-label, '上传') or contains(@aria-label, 'Upload') or contains(@aria-label, 'Add') or contains(@aria-label, '添加')]"
+            try:
+                plus_btn = WebDriverWait(self.driver, 5).until(EC.element_to_be_clickable((By.XPATH, plus_btn_xpath)))
+                plus_btn.click()
+            except TimeoutException:
+                logger.warning("Could not find '+' button element via native Selenium.")
+                return
+            except Exception as e:
+                logger.warning(f"Failed to click '+' button: {e}")
+                return
 
-        Returns:
-            (images_list | None, status_str)
-            where status_str is one of:
-                'success', 'quota_exhausted', 'timeout', 'no_images'
-        """
+            # Wait for menu animation
+            time.sleep(1.0)
+            
+            # 2. Find the menu item
+            menu_item_xpath = "//*[(contains(text(), '制作图片') or contains(text(), 'Create image') or contains(text(), 'Imagen')) and not(self::script) and not(self::style)]"
+            try:
+                elements = self.driver.find_elements(By.XPATH, menu_item_xpath)
+                clicked = False
+                for el in elements:
+                    if el.is_displayed():
+                        # Make sure it's not a huge chat bubble
+                        if len(el.text.strip()) > 30:
+                            continue
+                        try:
+                            el.click()
+                            clicked = True
+                            logger.info("Successfully clicked 'Create image' / '制作图片' button natively.")
+                            break
+                        except Exception:
+                            # Fallback if native click fails due to overlap
+                            self.driver.execute_script("arguments[0].click();", el)
+                            clicked = True
+                            logger.info("Successfully clicked 'Create image' via JS fallback on native element.")
+                            break
+                
+                if not clicked:
+                    logger.warning("Found 'Create image' text, but could not click it.")
+                    try:
+                        self.driver.execute_script("document.body.click();")
+                    except:
+                        pass
+                else:
+                    time.sleep(1.0)
+            except Exception as e:
+                logger.warning(f"Error finding menu item: {e}")
+                
+        except Exception as e:
+            logger.warning(f"Error in _click_create_image_button: {e}")
+
+    def generate_and_download(self, prompt_text: str, reference_image_path: str = None):
+        """Full flow: type prompt → (optional) upload image → submit → wait → download."""
         logger.info(f"Generating: {prompt_text[:60]}…")
 
+        self._click_create_image_button()
         self.input_prompt(prompt_text)
+        
+        if reference_image_path:
+            import os
+            abs_path = os.path.abspath(reference_image_path)
+            if os.path.exists(abs_path):
+                self.upload_image(abs_path)
+            else:
+                logger.error(f"Reference image not found: {abs_path}")
+
+        # Capture all existing image srcs BEFORE clicking submit
+        # This ensures we don't accidentally download the reference image later
+        existing_srcs = set()
+        try:
+            for img in self.driver.find_elements(By.TAG_NAME, "img"):
+                src = img.get_attribute("src")
+                if src:
+                    existing_srcs.add(src)
+        except Exception:
+            pass
+
         self.submit_prompt()
 
-        status = self.wait_for_image_generation()
+        status = self.wait_for_image_generation(existing_srcs=existing_srcs)
 
         if status != "success":
             logger.warning(f"Generation status: {status}")
@@ -242,7 +379,7 @@ class GeminiAutomation:
         # Let images fully render
         time.sleep(3)
 
-        images = self.download_generated_images()
+        images = self.download_generated_images(existing_srcs=existing_srcs)
         if images:
             logger.info(f"Downloaded {len(images)} image(s)")
             return images, "success"
@@ -278,10 +415,13 @@ class GeminiAutomation:
         except Exception:
             return False
 
-    def _find_generated_images(self):
+    def _find_generated_images(self, existing_srcs=None):
         """Return a de-duplicated list of <img> WebElements that look like
         generated images (ignoring tiny icons and SVGs).
         """
+        if existing_srcs is None:
+            existing_srcs = set()
+            
         seen_srcs = set()
         results = []
 
@@ -293,6 +433,11 @@ class GeminiAutomation:
                     if src in seen_srcs or src.startswith("data:image/svg"):
                         continue
                     
+                    # CRITICAL FIX: Skip images that were already on the page before generation
+                    # (e.g. the reference image we just uploaded)
+                    if src in existing_srcs:
+                        continue
+
                     alt = (img.get_attribute("alt") or "").lower()
                     # Filter out profile pictures explicitly
                     if "google account" in alt or "profile" in alt or "头像" in alt or "avatar" in alt:

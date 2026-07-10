@@ -11,6 +11,7 @@ Each worker:
 
 import os
 import time
+import queue
 import random
 import logging
 import threading
@@ -49,6 +50,7 @@ class BrowserWorker(threading.Thread):
         self.image_prefix = image_prefix
         self.config = config
         self.status_callback = status_callback
+        self.mine_request_queue = queue.Queue()
 
         self.driver = None
         self.automation = None
@@ -155,6 +157,41 @@ class BrowserWorker(threading.Thread):
                 f"失败: {self.stats['failed']}"
             )
 
+    def _check_and_run_mining(self):
+        while not self.mine_request_queue.empty():
+            req = self.mine_request_queue.get()
+            self._log("[挖掘机] 收到亚马逊挖掘请求，正在新标签页中执行...")
+            try:
+                original_window = self.driver.current_window_handle
+                self.driver.execute_script("window.open('about:blank', '_blank');")
+                new_window = [w for w in self.driver.window_handles if w != original_window][-1]
+                self.driver.switch_to.window(new_window)
+                
+                from core.amazon_miner import AmazonMiner
+                miner = AmazonMiner(driver=self.driver)
+                prompts = miner.mine_trends(req["keyword"], req["limit"])
+                
+                if not prompts:
+                    self._log("[挖掘机] ❌ 未找到符合条件的商品（可能被 CAPTCHA 拦截或商品都是大套装）", "error")
+                else:
+                    self._log(f"[挖掘机] ✅ 挖掘完成！共获得 {len(prompts)} 个生图任务", "info")
+                    for item_dict in prompts:
+                        self.task_queue.add_task(
+                            prompt=item_dict["prompt"], 
+                            target_count=req["target_count"], 
+                            reference_image_path=item_dict.get("reference_image_path")
+                        )
+                
+                self.driver.close()
+                self.driver.switch_to.window(original_window)
+            except Exception as e:
+                self._log(f"[挖掘机] ❌ 挖掘失败: {e}", "error")
+                try:
+                    if len(self.driver.window_handles) > 0:
+                        self.driver.switch_to.window(self.driver.window_handles[0])
+                except:
+                    pass
+
     def _run_loop(self):
         if not self._create_driver():
             return
@@ -162,18 +199,23 @@ class BrowserWorker(threading.Thread):
         self.automation.navigate_to_gemini()
         
         if not self.confirm_event.is_set():
-            self._log("等待手动确认（请在界面上点击【登录完成，开始跑图】）...")
-            self.confirm_event.wait()
+            self._log("等待手动登录 Gemini... 此时您也可以开新标签页登录 Amazon 或者直接挖掘")
+            while not self._stop_event.is_set() and not self.confirm_event.is_set():
+                self._check_and_run_mining()
+                time.sleep(1)
+            
             if self._stop_event.is_set():
                 return
-            self._log("收到确认信号，准备开始自动化！")
+            self._log("收到确认信号，准备开始自动化跑图！")
         
-        self._log("已进入 Gemini 页面")
+        self._log("已进入自动跑图模式")
 
         retry_limit = self.config.get("retry_count", 3)
-        cooldown = int(self.config.get("cooldown_time", 15))
+        cooldown = int(self.config.get("cooldown_time", 3))
 
         while not self._stop_event.is_set():
+            self._check_and_run_mining()
+            
             task = self.task_queue.get_next_task()
             if not task:
                 time.sleep(3)
@@ -198,9 +240,11 @@ class BrowserWorker(threading.Thread):
                     
                     # Cooldown before generating more for the same task
                     if not self._stop_event.is_set():
-                        self._log(f"冷却中，等待 {cooldown} 秒...")
+                        self._log(f"等待 {cooldown} 秒后进行下一次生成...")
                         time.sleep(cooldown)
+                        self._log("正在开启新对话...")
                         self.automation.start_new_chat()
+                        self._log("新对话开启完毕，准备生成下一张！")
                 elif not success:
                     self.stats["failed"] += 1
                     self.task_queue.mark_failed(task["id"], "生成失败")
@@ -224,7 +268,10 @@ class BrowserWorker(threading.Thread):
             self._log(f"执行生成 (第 {attempt} 次尝试)...")
 
             try:
-                images, status = self.automation.generate_and_download(prompt)
+                images, status = self.automation.generate_and_download(
+                    prompt, 
+                    reference_image_path=task.get("reference_image_path")
+                )
 
                 if status == "quota_exhausted":
                     self._log("免费额度已用尽，切换账号中…")

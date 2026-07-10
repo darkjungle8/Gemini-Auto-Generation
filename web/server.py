@@ -12,6 +12,8 @@ from utils.config import Config
 from core.task_queue import TaskQueue
 from core.account_manager import AccountManager
 from core.browser_worker import BrowserWorker
+from core.image_downloader import ImageDownloader
+from core.amazon_miner import AmazonMiner
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +88,63 @@ def save_config():
 def get_tasks():
     return jsonify(task_queue.get_all_tasks())
 
+@app.route("/api/mine_trends", methods=["POST"])
+def mine_trends():
+    data = request.json
+    keyword = data.get("keyword", "ditsy floral fabric")
+    limit = int(data.get("limit", 5))
+    target_count = int(data.get("target_count", 4))
+    
+    # Check if a browser worker is currently running
+    active_worker = workers[0] if workers and len(workers) > 0 else None
+    
+    if active_worker:
+        append_log("[系统] 已有打开的浏览器窗口，将在此窗口内新建标签页进行挖掘...", "info")
+        active_worker.mine_request_queue.put({
+            "keyword": keyword,
+            "limit": limit,
+            "target_count": target_count
+        })
+        return jsonify({"status": "mining_queued"})
+
+    # Run in background to avoid blocking the UI response (legacy behavior if no browser is open)
+    def run_miner():
+        try:
+            append_log(f"[挖掘机] 未检测到打开的浏览器，正在后台启动独立 Chrome 访问亚马逊...", "info")
+            miner = AmazonMiner()
+            prompts = miner.mine_trends(keyword, limit)
+            
+            if not prompts:
+                append_log(f"[挖掘机] ❌ 未找到符合条件的商品（可能被 CAPTCHA 拦截或商品都是大套装）", "error")
+                return
+            
+            append_log(f"[挖掘机] ✅ 挖掘完成！共获得 {len(prompts)} 个生图任务", "success")
+            
+            for item_dict in prompts:
+                task_queue.add_task(
+                    prompt=item_dict["prompt"], 
+                    target_count=target_count, 
+                    reference_image_path=item_dict.get("reference_image_path")
+                )
+            
+            socketio.emit("task_update", {"tasks": task_queue.get_all_tasks()})
+            
+            ref_count = sum(1 for p in prompts if p.get("reference_image_path"))
+            append_log(f"[挖掘机] 已添加 {len(prompts)} 个任务到队列（{ref_count} 个带参考图）。如果 Gemini 已登录，会自动开始跑图！", "success")
+        except Exception as e:
+            append_log(f"[挖掘机] ❌ 挖掘出错: {e}", "error")
+            logger.error(f"Amazon Miner failed: {e}")
+            
+    threading.Thread(target=run_miner, daemon=True).start()
+    return jsonify({"status": "mining_started"})
+
+@app.route("/api/tasks/clear", methods=["POST"])
+def clear_tasks():
+    task_queue.clear_all_tasks()
+    socketio.emit("task_update", {"tasks": []})
+    append_log("[系统] 已清空所有排队任务", "info")
+    return jsonify({"status": "success"})
+
 @app.route("/api/tasks", methods=["POST"])
 def add_task():
     data = request.json
@@ -104,6 +163,14 @@ def delete_task(task_id):
         socketio.emit("task_update", {"tasks": task_queue.get_all_tasks()})
         return jsonify({"status": "ok"})
     return jsonify({"error": "Task not found"}), 404
+
+@app.route("/api/tasks/clear_pending", methods=["DELETE"])
+def clear_pending_tasks():
+    if task_queue.clear_pending_tasks():
+        socketio.emit("task_update", {"tasks": task_queue.get_all_tasks()})
+        append_log("[系统] 已一键清除所有排队中的任务。", "info")
+        return jsonify({"status": "ok"})
+    return jsonify({"status": "no_changes"})
 
 @app.route("/api/start", methods=["POST"])
 def start_automation():

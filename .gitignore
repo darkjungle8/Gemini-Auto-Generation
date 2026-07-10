@@ -16,3 +16,4 @@ prompts.json
 # Virtual Environment
 venv/
 env/
+gemini-auto-gen/

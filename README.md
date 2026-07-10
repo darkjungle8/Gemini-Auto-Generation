@@ -12,14 +12,14 @@
 
 ## 🚀 启动方式
 
-### 方式一：快捷方式启动（推荐 Mac 用户）
-如果你在桌面上生成了 `启动跑图机器人.command` 快捷方式，只需双击它，程序会自动在后台运行，并直接为你打开浏览器页面。
+### 方式一：快捷方式启动（推荐 Windows 用户）
+如果你在桌面上生成了 `启动跑图机器人.bat` 快捷方式，只需双击它，程序会自动在后台运行，并直接为你打开浏览器页面。
 
 ### 方式二：终端命令行启动
-打开终端 (Terminal)，输入以下命令：
-```bash
-cd /Users/zhumingde/Documents/antigravity/gemini-auto-gen
-python3 main.py
+打开终端 (Terminal 或 cmd)，输入以下命令：
+```cmd
+cd D:\5EDemocache\gemini-auto-gen
+python main.py
 ```
 
 ## 🛠 使用流程
