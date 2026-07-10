@@ -83,13 +83,19 @@
                         <label>手动提示词</label>
                         <input type="text" id="newTaskPrompt" placeholder="帮我生成一只可爱的猫咪...">
                     </div>
+                    <div class="input-group" style="flex: 2; margin-bottom: 0;">
+                        <label>上传参考图(可选)</label>
+                        <input type="file" id="newTaskImages" multiple accept="image/*" style="font-size: 0.8rem; padding: 4px;">
+                    </div>
                     <div class="input-group" style="flex: 1; margin-bottom: 0;">
                         <label>张数</label>
                         <input type="number" id="newTaskCount" value="4" min="1">
                     </div>
                     <button id="addTaskBtn" class="btn primary" style="margin-bottom: 0;">➕</button>
-                    <button id="clearTasksBtn" class="btn danger" style="margin-bottom: 0; margin-left: 10px;" title="清空所有任务">🗑️ 清空任务</button>
+                    <button id="clearTasksBtn2" class="btn danger" style="margin-bottom: 0; margin-left: 10px;" title="清空所有任务" onclick="document.getElementById('clearTasksBtn').click()">🗑️</button>
                 </div>
+                
+                <div id="imagePreviewContainer" style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 0.75rem;"></div>
 
                 <ul class="tasks-list" id="tasksList">
                     <li class="empty-hint">暂无任务</li>

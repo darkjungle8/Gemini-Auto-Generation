@@ -159,6 +159,53 @@ async function fetchTasks() {
     }
 }
 
+let pendingImages = [];
+
+function renderImagePreviews() {
+    const container = document.getElementById('imagePreviewContainer');
+    if (!container) return;
+    container.innerHTML = '';
+    
+    pendingImages.forEach((file, index) => {
+        const itemDiv = document.createElement('div');
+        itemDiv.style.cssText = "display: flex; align-items: center; background: rgba(0,0,0,0.05); padding: 2px 6px; border-radius: 4px; font-size: 0.75rem;";
+        
+        const nameSpan = document.createElement('span');
+        nameSpan.textContent = file.name;
+        nameSpan.style.marginRight = "6px";
+        nameSpan.style.maxWidth = "100px";
+        nameSpan.style.overflow = "hidden";
+        nameSpan.style.textOverflow = "ellipsis";
+        nameSpan.style.whiteSpace = "nowrap";
+        
+        const rmBtn = document.createElement('button');
+        rmBtn.textContent = '✖';
+        rmBtn.style.cssText = "background: none; border: none; color: red; cursor: pointer; padding: 0; font-size: 0.8rem;";
+        rmBtn.onclick = () => {
+            pendingImages.splice(index, 1);
+            renderImagePreviews();
+        };
+        
+        itemDiv.appendChild(nameSpan);
+        itemDiv.appendChild(rmBtn);
+        container.appendChild(itemDiv);
+    });
+}
+
+const fileInput = document.getElementById('newTaskImages');
+if (fileInput) {
+    fileInput.addEventListener('change', (e) => {
+        if (e.target.files && e.target.files.length > 0) {
+            for (let i = 0; i < e.target.files.length; i++) {
+                pendingImages.push(e.target.files[i]);
+            }
+            renderImagePreviews();
+        }
+        // clear the input so the same files can be selected again
+        e.target.value = '';
+    });
+}
+
 async function addTask() {
     const prompt = els.newTaskPrompt.value.trim();
     const count = parseInt(els.newTaskCount.value, 10) || 1;
@@ -166,12 +213,24 @@ async function addTask() {
     
     els.addTaskBtn.disabled = true;
     try {
+        const formData = new FormData();
+        formData.append('prompt', prompt);
+        formData.append('target_count', count);
+        
+        if (pendingImages.length > 0) {
+            for (let i = 0; i < pendingImages.length; i++) {
+                formData.append('images', pendingImages[i]);
+            }
+        }
+
         await fetch('/api/tasks', {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ prompt: prompt, target_count: count })
+            body: formData
         });
+        
         els.newTaskPrompt.value = '';
+        pendingImages = [];
+        renderImagePreviews();
     } catch (e) {
         alert("添加失败: " + e);
     } finally {

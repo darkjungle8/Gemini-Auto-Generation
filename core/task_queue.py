@@ -44,9 +44,13 @@ class TaskQueue:
             except Exception as e:
                 logger.error(f"Error in on_update callback: {e}")
 
-    def add_task(self, prompt, target_count=1, reference_image_path=None):
+    def add_task(self, prompt, target_count=1, reference_image_paths=None):
         """Add a new task to the queue."""
         with self._lock:
+            # Handle backward compatibility / normalization
+            if isinstance(reference_image_paths, str):
+                reference_image_paths = [reference_image_paths]
+                
             task = {
                 "id": str(uuid.uuid4())[:8],
                 "prompt": prompt,
@@ -54,7 +58,7 @@ class TaskQueue:
                 "current_count": 0,
                 "status": "pending",
                 "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "reference_image_path": reference_image_path
+                "reference_image_paths": reference_image_paths or []
             }
             self.tasks.append(task)
             self._save()
@@ -72,14 +76,19 @@ class TaskQueue:
             return list(self.tasks)
 
     def _delete_task_image(self, task):
-        """Delete the reference image associated with a task if it exists."""
-        ref_path = task.get("reference_image_path")
-        if ref_path and os.path.exists(ref_path):
-            try:
-                os.remove(ref_path)
-                logger.info(f"Deleted reference image for task {task['id']}: {ref_path}")
-            except Exception as e:
-                logger.error(f"Failed to delete reference image {ref_path}: {e}")
+        """Delete the reference images associated with a task if they exist."""
+        ref_paths = task.get("reference_image_paths", [])
+        # Backwards compatibility check
+        if task.get("reference_image_path"):
+            ref_paths.append(task.get("reference_image_path"))
+            
+        for ref_path in ref_paths:
+            if ref_path and os.path.exists(ref_path):
+                try:
+                    os.remove(ref_path)
+                    logger.info(f"Deleted reference image for task {task['id']}: {ref_path}")
+                except Exception as e:
+                    logger.error(f"Failed to delete reference image {ref_path}: {e}")
 
     def delete_task(self, task_id: str):
         """Delete a task by ID."""

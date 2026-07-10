@@ -270,7 +270,7 @@ class BrowserWorker(threading.Thread):
             try:
                 images, status = self.automation.generate_and_download(
                     prompt, 
-                    reference_image_path=task.get("reference_image_path")
+                    reference_image_paths=task.get("reference_image_paths") or []
                 )
 
                 if status == "quota_exhausted":

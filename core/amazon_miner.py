@@ -188,7 +188,7 @@ class AmazonMiner:
                             for p in prompts:
                                 results.append({
                                     "prompt": p,
-                                    "reference_image_path": local_path
+                                    "reference_image_paths": [local_path] if local_path else []
                                 })
                         except Exception as inner_e:
                             logger.error(f"Error processing image {img_idx+1}: {inner_e}")

@@ -124,12 +124,12 @@ def mine_trends():
                 task_queue.add_task(
                     prompt=item_dict["prompt"], 
                     target_count=target_count, 
-                    reference_image_path=item_dict.get("reference_image_path")
+                    reference_image_paths=item_dict.get("reference_image_paths")
                 )
             
             socketio.emit("task_update", {"tasks": task_queue.get_all_tasks()})
             
-            ref_count = sum(1 for p in prompts if p.get("reference_image_path"))
+            ref_count = sum(1 for p in prompts if p.get("reference_image_paths"))
             append_log(f"[挖掘机] 已添加 {len(prompts)} 个任务到队列（{ref_count} 个带参考图）。如果 Gemini 已登录，会自动开始跑图！", "success")
         except Exception as e:
             append_log(f"[挖掘机] ❌ 挖掘出错: {e}", "error")
@@ -147,12 +147,34 @@ def clear_tasks():
 
 @app.route("/api/tasks", methods=["POST"])
 def add_task():
-    data = request.json
-    prompt = data.get("prompt", "").strip()
-    target_count = int(data.get("target_count", 1))
+    # Support both JSON (legacy) and multipart/form-data
+    if request.content_type and request.content_type.startswith("multipart/form-data"):
+        prompt = request.form.get("prompt", "").strip()
+        target_count = int(request.form.get("target_count", 1))
+        images = request.files.getlist("images")
+        
+        reference_image_paths = []
+        if images:
+            upload_dir = os.path.join(os.getcwd(), "uploads")
+            os.makedirs(upload_dir, exist_ok=True)
+            for img in images:
+                if img.filename:
+                    # secure the filename and add timestamp to avoid collisions
+                    ext = os.path.splitext(img.filename)[1] or ".jpg"
+                    safe_name = f"manual_upload_{int(time.time()*1000)}_{len(reference_image_paths)}{ext}"
+                    save_path = os.path.join(upload_dir, safe_name)
+                    img.save(save_path)
+                    reference_image_paths.append(save_path)
+    else:
+        data = request.json or {}
+        prompt = data.get("prompt", "").strip()
+        target_count = int(data.get("target_count", 1))
+        reference_image_paths = data.get("reference_image_paths")
+
     if not prompt:
         return jsonify({"error": "Prompt cannot be empty"}), 400
-    task = task_queue.add_task(prompt, target_count)
+        
+    task = task_queue.add_task(prompt, target_count, reference_image_paths=reference_image_paths)
     # Broadcast task update
     socketio.emit("task_update", {"tasks": task_queue.get_all_tasks()})
     return jsonify(task)

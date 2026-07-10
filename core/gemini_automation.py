@@ -73,7 +73,7 @@ IMAGE_SELECTORS = [
 class GeminiAutomation:
     """Drives the Gemini web UI to generate and download images."""
 
-    def __init__(self, driver, generation_timeout=180):
+    def __init__(self, driver, generation_timeout=45):
         self.driver = driver
         self.wait = WebDriverWait(driver, 30)
         self.long_wait = WebDriverWait(driver, generation_timeout)
@@ -203,8 +203,11 @@ class GeminiAutomation:
             with open(file_path, "rb") as f:
                 b64_data = base64.b64encode(f.read()).decode("utf-8")
                 
+            import os
+            filename = os.path.basename(file_path) if file_path else "reference.jpg"
             js_paste = """
             var b64Data = arguments[0];
+            var fileName = arguments[1];
             var promptEl = document.querySelector("rich-textarea .ql-editor") || 
                            document.querySelector("[contenteditable='true']") || 
                            document.querySelector("textarea") || 
@@ -213,7 +216,7 @@ class GeminiAutomation:
             fetch("data:image/jpeg;base64," + b64Data)
             .then(res => res.blob())
             .then(blob => {
-                var file = new File([blob], "reference.jpg", {type: "image/jpeg"});
+                var file = new File([blob], fileName, {type: "image/jpeg"});
                 var dt = new DataTransfer();
                 dt.items.add(file);
                 var ev = new ClipboardEvent("paste", {
@@ -224,7 +227,7 @@ class GeminiAutomation:
                 promptEl.dispatchEvent(ev);
             });
             """
-            self.driver.execute_script(js_paste, b64_data)
+            self.driver.execute_script(js_paste, b64_data, filename)
             logger.info(f"Pasted reference image via JS: {file_path}")
             time.sleep(5)
         except Exception as e:
@@ -342,20 +345,21 @@ class GeminiAutomation:
         except Exception as e:
             logger.warning(f"Error in _click_create_image_button: {e}")
 
-    def generate_and_download(self, prompt_text: str, reference_image_path: str = None):
-        """Full flow: type prompt → (optional) upload image → submit → wait → download."""
+    def generate_and_download(self, prompt_text: str, reference_image_paths: list = None):
+        """Full flow: type prompt → (optional) upload images → submit → wait → download."""
         logger.info(f"Generating: {prompt_text[:60]}…")
 
         self._click_create_image_button()
         self.input_prompt(prompt_text)
         
-        if reference_image_path:
+        if reference_image_paths:
             import os
-            abs_path = os.path.abspath(reference_image_path)
-            if os.path.exists(abs_path):
-                self.upload_image(abs_path)
-            else:
-                logger.error(f"Reference image not found: {abs_path}")
+            for ref_path in reference_image_paths:
+                abs_path = os.path.abspath(ref_path)
+                if os.path.exists(abs_path):
+                    self.upload_image(abs_path)
+                else:
+                    logger.error(f"Reference image not found: {abs_path}")
 
         # Capture all existing image srcs BEFORE clicking submit
         # This ensures we don't accidentally download the reference image later
