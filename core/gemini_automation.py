@@ -54,6 +54,14 @@ QUOTA_INDICATORS = [
     "达到限制",
     "已达到上限",
     "limit reached",
+    "无法生成更多图片",
+    "次数过多",
+    "已达上限",
+    "明天再试",
+    "tomorrow",
+    "you've reached",
+    "you have reached",
+    "limit",
 ]
 
 # CSS selectors for generated images (tried in order).
@@ -140,7 +148,7 @@ class GeminiAutomation:
     # ------------------------------------------------------------------
 
     def input_prompt(self, prompt_text: str):
-        """Locate the prompt input and type *prompt_text* with human-like delays."""
+        """Locate the prompt input and paste *prompt_text* directly."""
         input_el = self._find_element_multi(PROMPT_SELECTORS)
         input_el.click()
         time.sleep(0.5)
@@ -154,13 +162,27 @@ class GeminiAutomation:
             input_el.send_keys(Keys.DELETE)
         time.sleep(0.3)
 
-        # Type character-by-character for realism
-        for ch in prompt_text:
-            input_el.send_keys(ch)
-            time.sleep(random.uniform(0.01, 0.06))
-
+        # Use JS to simulate pasting to handle newlines correctly without triggering submit
+        js_paste = """
+        var text = arguments[0];
+        var el = arguments[1];
+        el.focus();
+        if (!document.execCommand('insertText', false, text)) {
+            // Fallback if execCommand fails (though it usually works on contenteditable)
+            el.textContent = text;
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+        """
+        try:
+            self.driver.execute_script(js_paste, prompt_text, input_el)
+        except Exception as e:
+            logger.warning(f"JS paste failed: {e}. Falling back to bulk send_keys.")
+            # If prompt has newlines, replace them with Shift+Enter so we don't accidentally submit
+            safe_text = prompt_text.replace("\n", Keys.SHIFT + Keys.ENTER)
+            input_el.send_keys(safe_text)
+            
         time.sleep(0.5)
-        logger.debug(f"Typed prompt ({len(prompt_text)} chars)")
+        logger.debug(f"Pasted prompt ({len(prompt_text)} chars)")
 
     def upload_image(self, file_path: str):
         """Upload a local image file to Gemini."""

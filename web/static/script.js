@@ -26,6 +26,8 @@ const els = {
     newTaskCount: document.getElementById('newTaskCount'),
     addTaskBtn: document.getElementById('addTaskBtn'),
     clearTasksBtn: document.getElementById('clearTasksBtn'),
+    excelFileInput: document.getElementById('excelFileInput'),
+    importExcelBtn: document.getElementById('importExcelBtn'),
     tasksList: document.getElementById('tasksList'),
     taskBadge: document.getElementById('taskBadge'),
     cooldownTime: document.getElementById('cooldownTime'),
@@ -316,6 +318,41 @@ els.confirmBtn.onclick = confirmRun;
 els.stopBtn.onclick = stopRun;
 els.addTaskBtn.onclick = addTask;
 els.clearTasksBtn.onclick = clearTasks;
+
+if (els.importExcelBtn) {
+    els.importExcelBtn.addEventListener('click', async () => {
+        const file = els.excelFileInput.files[0];
+        if (!file) {
+            alert("请选择一个 .xlsx 文件！");
+            return;
+        }
+        els.importExcelBtn.disabled = true;
+        els.importExcelBtn.textContent = "导入中...";
+        
+        try {
+            const formData = new FormData();
+            formData.append('file', file);
+            
+            const response = await fetch('/api/tasks/excel', {
+                method: 'POST',
+                body: formData
+            });
+            const data = await response.json();
+            
+            if (response.ok) {
+                alert(`成功导入 ${data.imported_count} 个生图任务！`);
+                els.excelFileInput.value = '';
+            } else {
+                alert(`导入失败: ${data.error}`);
+            }
+        } catch (e) {
+            alert("请求失败: " + e);
+        } finally {
+            els.importExcelBtn.disabled = false;
+            els.importExcelBtn.textContent = "导入 Excel";
+        }
+    });
+}
 
 // --- Socket IO ---
 socket.on('log_event', (data) => {

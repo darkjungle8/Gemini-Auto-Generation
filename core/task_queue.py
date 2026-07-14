@@ -44,7 +44,7 @@ class TaskQueue:
             except Exception as e:
                 logger.error(f"Error in on_update callback: {e}")
 
-    def add_task(self, prompt, target_count=1, reference_image_paths=None):
+    def add_task(self, prompt, target_count=1, reference_image_paths=None, output_path=None):
         """Add a new task to the queue."""
         with self._lock:
             # Handle backward compatibility / normalization
@@ -58,7 +58,8 @@ class TaskQueue:
                 "current_count": 0,
                 "status": "pending",
                 "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "reference_image_paths": reference_image_paths or []
+                "reference_image_paths": reference_image_paths or [],
+                "output_path": output_path
             }
             self.tasks.append(task)
             self._save()

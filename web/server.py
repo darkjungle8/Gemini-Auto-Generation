@@ -14,6 +14,7 @@ from core.account_manager import AccountManager
 from core.browser_worker import BrowserWorker
 from core.image_downloader import ImageDownloader
 from core.amazon_miner import AmazonMiner
+from core.excel_parser import parse_excel_to_tasks
 
 logger = logging.getLogger(__name__)
 
@@ -178,6 +179,38 @@ def add_task():
     # Broadcast task update
     socketio.emit("task_update", {"tasks": task_queue.get_all_tasks()})
     return jsonify(task)
+
+@app.route("/api/tasks/excel", methods=["POST"])
+def import_excel_tasks():
+    if "file" not in request.files:
+        return jsonify({"error": "No file part"}), 400
+    file = request.files["file"]
+    if file.filename == "":
+        return jsonify({"error": "No selected file"}), 400
+    
+    if file and file.filename.endswith(".xlsx"):
+        upload_dir = os.path.join(os.getcwd(), "uploads")
+        os.makedirs(upload_dir, exist_ok=True)
+        safe_name = f"excel_import_{int(time.time()*1000)}.xlsx"
+        save_path = os.path.join(upload_dir, safe_name)
+        file.save(save_path)
+        
+        try:
+            tasks = parse_excel_to_tasks(save_path)
+            for t in tasks:
+                task_queue.add_task(
+                    prompt=t["prompt"],
+                    target_count=t["target_count"],
+                    output_path=t.get("output_path")
+                )
+            socketio.emit("task_update", {"tasks": task_queue.get_all_tasks()})
+            append_log(f"[系统] ✅ 成功从 Excel 导入了 {len(tasks)} 个生图任务", "success")
+            return jsonify({"status": "ok", "imported_count": len(tasks)})
+        except Exception as e:
+            logger.error(f"Excel import failed: {e}")
+            append_log(f"[系统] ❌ Excel 导入失败: {str(e)}", "error")
+            return jsonify({"error": str(e)}), 500
+    return jsonify({"error": "Invalid file format. Only .xlsx is allowed."}), 400
 
 @app.route("/api/tasks/<task_id>", methods=["DELETE"])
 def delete_task(task_id):

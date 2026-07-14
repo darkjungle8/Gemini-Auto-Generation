@@ -24,6 +24,9 @@ from core.image_downloader import ImageDownloader
 
 logger = logging.getLogger(__name__)
 
+# Global lock to prevent undetected-chromedriver from hanging when multiple threads patch the binary simultaneously
+_DRIVER_CREATION_LOCK = threading.Lock()
+
 
 class BrowserWorker(threading.Thread):
     """Autonomous worker that drives one Chrome window."""
@@ -104,7 +107,8 @@ class BrowserWorker(threading.Thread):
         options.add_argument("--disable-infobars")
 
         try:
-            self.driver = uc.Chrome(options=options)
+            with _DRIVER_CREATION_LOCK:
+                self.driver = uc.Chrome(options=options)
             self.driver.set_window_size(1280, 900)
             self.automation = GeminiAutomation(self.driver)
             return True
@@ -283,7 +287,7 @@ class BrowserWorker(threading.Thread):
                     continue  # retry with new account
 
                 if status == "success" and images:
-                    saved_files = self._save_images(images)
+                    saved_files = self._save_images(images, task)
                     return True, len(saved_files)
 
                 # timeout / no_images → retry
@@ -301,12 +305,18 @@ class BrowserWorker(threading.Thread):
     # Save downloaded images
     # ------------------------------------------------------------------
 
-    def _save_images(self, image_data_list: list) -> list:
+    def _save_images(self, image_data_list: list, task: dict) -> list:
         saved_files = []
+        
+        target_dir = self.output_dir
+        if task and task.get("output_path"):
+            target_dir = task.get("output_path")
+            os.makedirs(target_dir, exist_ok=True)
+            
         for img_data in image_data_list:
             num = self._next_image_number()
             filename = f"{self.image_prefix}_{num:04d}.jpg"
-            filepath = os.path.join(self.output_dir, filename)
+            filepath = os.path.join(target_dir, filename)
             try:
                 ImageDownloader.download_and_save_as_jpg(img_data, filepath)
                 saved_files.append(filename)
